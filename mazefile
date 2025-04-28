@@ -4,9 +4,12 @@ import numpy as np
 import time
 import pandas as pd
 import matplotlib.pyplot as plt
+import random
 from pymoo.core.problem import Problem
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.termination import get_termination
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
 from pymoo.optimize import minimize
 
 # الاتجاهات
@@ -21,7 +24,41 @@ def load_maze(filename):
     goal = (len(maze)-1, len(maze[-1])-1)
     return maze, start, goal
 
-# الكلاس المحسن للمشكلة
+# دالة للتحقق إذا كان الموقع فيه جدار
+def is_wall(pos, maze):
+    x, y = pos
+    return not (0 <= x < len(maze) and 0 <= y < len(maze[0])) or maze[x][y] == '#'
+
+# دالة للحصول على الحركات الصالحة
+def get_valid_moves(position, maze):
+    valid = []
+    x, y = position
+    for i, (dx, dy) in enumerate(directions):
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < len(maze) and 0 <= ny < len(maze[0]) and maze[nx][ny] != '#':
+            valid.append(i)
+    return valid
+
+# دالة ميوتيشن خاصة (تحل مشكلة ضرب الجدران)
+def maze_aware_mutation(individual, maze, start):
+    x, y = start
+    for idx in range(len(individual)):
+        move = individual[idx]
+        dx, dy = directions[int(move)]
+        nx, ny = x + dx, y + dy
+
+        if not (0 <= nx < len(maze) and 0 <= ny < len(maze[0])) or maze[nx][ny] == '#':
+            valid_moves = get_valid_moves((x, y), maze)
+            if valid_moves:
+                individual[idx] = random.choice(valid_moves)
+
+        # تحديث الموقع بعد الحركة
+        move = individual[idx]
+        dx, dy = directions[int(move)]
+        x, y = x + dx, y + dy
+    return individual
+
+# كلاس المشكلة
 class SmartMazeProblem(Problem):
     def __init__(self, maze, start, goal, max_steps):
         super().__init__(n_var=max_steps, n_obj=1, n_constr=0, xl=0, xu=3, type_var=np.int32)
@@ -53,12 +90,25 @@ def run_experiment(maze_file, label, max_steps):
 
     for gen in [1000, 10000, 50000]:
         problem = SmartMazeProblem(maze, start, goal, max_steps=max_steps)
-        algorithm = GA(pop_size=100)
+
+        # تعريف الكروس أوفر والميوتيشن
+        crossover = SBX(prob=0.9, eta=15)
+        mutation = lambda x: maze_aware_mutation(x, maze, start)
+
+        algorithm = GA(
+            pop_size=100,
+            crossover=crossover,
+            eliminate_duplicates=True
+        )
+
         termination = get_termination("n_gen", gen)
 
         start_time = time.time()
         res = minimize(problem, algorithm, termination, seed=42, verbose=False)
         end_time = time.time()
+
+        # تطبيق الميوتيشن اليدوي بعد التزاوج
+        maze_aware_mutation(res.X, maze, start)
 
         results.append({
             "generations": gen,
