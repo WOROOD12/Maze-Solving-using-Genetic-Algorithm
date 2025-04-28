@@ -1,0 +1,103 @@
+!pip install pymoo
+
+import numpy as np
+import time
+import pandas as pd
+import matplotlib.pyplot as plt
+from pymoo.core.problem import Problem
+from pymoo.algorithms.soo.nonconvex.ga import GA
+from pymoo.termination import get_termination
+from pymoo.optimize import minimize
+
+# الاتجاهات
+directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+
+# تحميل المتاهة
+def load_maze(filename):
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    maze = [list(line.strip()) for line in lines if line.strip()]
+    start = (0, 0)
+    goal = (len(maze)-1, len(maze[-1])-1)
+    return maze, start, goal
+
+# الكلاس المحسن للمشكلة
+class SmartMazeProblem(Problem):
+    def __init__(self, maze, start, goal, max_steps):
+        super().__init__(n_var=max_steps, n_obj=1, n_constr=0, xl=0, xu=3, type_var=np.int32)
+        self.maze = maze
+        self.start = start
+        self.goal = goal
+        self.max_steps = max_steps
+
+    def _evaluate(self, X, out, *args, **kwargs):
+        fitness = []
+        for path in X:
+            x, y = self.start
+            visited = set()
+            for move in path:
+                dx, dy = directions[int(move)]
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < len(self.maze) and 0 <= ny < len(self.maze[0]) and self.maze[nx][ny] != '#':
+                    x, y = nx, ny
+                visited.add((x, y))
+            dist = abs(x - self.goal[0]) + abs(y - self.goal[1])
+            reward = 0 if (x, y) != self.goal else -100
+            fitness.append(dist + reward + (self.max_steps - len(visited)) * 0.01)
+        out["F"] = np.array(fitness)
+
+# دالة لتشغيل التجارب على متاهة واحدة
+def run_experiment(maze_file, label, max_steps):
+    maze, start, goal = load_maze(maze_file)
+    results = []
+
+    for gen in [1000, 10000, 50000]:
+        problem = SmartMazeProblem(maze, start, goal, max_steps=max_steps)
+        algorithm = GA(pop_size=100)
+        termination = get_termination("n_gen", gen)
+
+        start_time = time.time()
+        res = minimize(problem, algorithm, termination, seed=42, verbose=False)
+        end_time = time.time()
+
+        results.append({
+            "generations": gen,
+            "best_fitness": res.F[0],
+            "path_cost": len(set(res.X)),
+            "execution_time": round(end_time - start_time, 2)
+        })
+
+    df = pd.DataFrame(results)
+    print(f"\n🔹 Results for {label} Maze:")
+    print(df)
+
+    # الرسم
+    plt.figure(figsize=(10, 4))
+    plt.plot(df["generations"], df["best_fitness"], marker='o')
+    plt.title(f"Best Fitness vs Generations ({label} Maze)")
+    plt.xlabel("Generations")
+    plt.ylabel("Best Fitness")
+    plt.grid(True)
+    plt.show()
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(df["generations"], df["path_cost"], marker='o')
+    plt.title(f"Path Cost vs Generations ({label} Maze)")
+    plt.xlabel("Generations")
+    plt.ylabel("Unique Steps Taken")
+    plt.grid(True)
+    plt.show()
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(df["generations"], df["execution_time"], marker='o')
+    plt.title(f"Execution Time vs Generations ({label} Maze)")
+    plt.xlabel("Generations")
+    plt.ylabel("Time (seconds)")
+    plt.grid(True)
+    plt.show()
+
+    return df
+
+# تشغيل التجارب
+df_100 = run_experiment("maze_100x1002.txt", "100x100", max_steps=300)
+df_200 = run_experiment("maze_200x2002.txt", "200x200", max_steps=500)
